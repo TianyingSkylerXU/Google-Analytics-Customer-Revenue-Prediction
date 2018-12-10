@@ -9,7 +9,7 @@ II. Repository Content
   This fold contain source of raw data and processed data used in the code.
   
 2. Code
-  This fold contain all codes in the project, including data import & cleaning, EDA and modeling.  
+  This fold contain all codes in the project, including data import, EDA and modeling.  
 
 3. Documents
   This fold contain final report and references.
