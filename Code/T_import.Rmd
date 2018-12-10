@@ -1,0 +1,92 @@
+---
+title: "data importing"
+author: "Tianying Xu"
+date: "12/09/2018"
+output: pdf_document
+---
+
+I. train
+```{r}
+library(data.table)
+library(dplyr)
+library(stringr)
+library(jsonlite)
+
+#read raw data without "hits" column
+Train_v2_nohits <- fread("train_v2.csv",select=c(1:6,8:13),stringsAsFactors=FALSE)
+Train_v2_nohits$fullVisitorId=as.character(Train_v2_nohits$fullVisitorId)  #id as character
+T_nohits1 <- Train_v2_nohits
+
+#split json columns 
+T_nohits_CD <- T_nohits1 %>% 
+  mutate(custom_dimensions_index=str_extract_all(customDimensions,"(?<=: \')(.*?)(?=\')")[[1]][1]) %>% 
+  mutate(custom_dimensions_value=str_extract_all(customDimensions,"(?<=: \')(.*?)(?=\')")[[1]][2]) 
+
+#replace quoates & split json columns
+T_nohits_CD1 <- data.frame(lapply(T_nohits_CD, function(x){gsub("\"\"", "\"", x)}))
+
+T_json_device <- paste("[",paste(T_nohits_CD1$device,collapse = ","),"]")
+T_device_add <- fromJSON(T_json_device)
+
+T_json_geo <- paste("[",paste(T_nohits_CD1$geoNetwork,collapse = ","),"]")
+T_geo_add <- fromJSON(T_json_geo)
+
+T_json_ttls <- paste("[",paste(unlist(T_nohits_CD1$totals),collapse = ","),"]")
+T_ttls_add <- fromJSON(T_json_ttls)
+
+T_json_trSr <- paste("[",paste(T_nohits_CD1$trafficSource,collapse = ","),"]")
+T_trSr_add <- fromJSON(T_json_trSr,flatten = TRUE)
+
+T_nohits_factors <- cbind(T_nohits_CD1,T_device_add,T_geo_add,T_ttls_add,T_trSr_add) %>% 
+  select(-c(customDimensions,device,geoNetwork,totals,trafficSource))
+
+# T1_nohits_factors <- T1_nohits_factors[,apply(T1_nohits_factors, 2, function(col) { length(unique(col)) > 1 })]  # remove constant variables
+write.csv(T_nohits_factors, "Data/T_nohits_factors.csv",row.names=FALSE)
+```
+
+II. test
+```{r}
+# read raw data
+Test_v2_nohits <- fread("test_v2.csv",select=c(1:6,8:13),stringsAsFactors=FALSE)
+Test_v2_nohits$fullVisitorId=as.character(Test_v2_nohits$fullVisitorId)
+Test_nohits1 <- Test_v2_nohits
+
+#split json columns & remove constant variables
+Test_nohits_CD <- Test_nohits1 %>% 
+  mutate(custom_dimensions_index=str_extract_all(customDimensions,"(?<=: \')(.*?)(?=\')")[[1]][1]) %>% 
+  mutate(custom_dimensions_value=str_extract_all(customDimensions,"(?<=: \')(.*?)(?=\')")[[1]][2]) 
+
+#replace quoates & split json columns
+Test_nohits_CD1 <- data.frame(lapply(Test_nohits_CD, function(x){gsub("\"\"", "\"", x)}))
+
+Test_json_device <- paste("[",paste(Test_nohits_CD1$device,collapse = ","),"]")
+Test_device_add <- fromJSON(Test_json_device)
+
+Test_json_geo <- paste("[",paste(Test_nohits_CD1$geoNetwork,collapse = ","),"]")
+Test_geo_add <- fromJSON(Test_json_geo)
+
+Test_json_ttls <- paste("[",paste(unlist(Test_nohits_CD1$totals),collapse = ","),"]")
+Test_ttls_add <- fromJSON(Test_json_ttls)
+
+Test_json_trSr <- paste("[",paste(Test_nohits_CD1$trafficSource,collapse = ","),"]")
+Test_trSr_add <- fromJSON(Test_json_trSr,flatten = TRUE)
+
+Test_nohits_factors <- cbind(Test_nohits_CD1,Test_device_add,Test_geo_add,Test_ttls_add,Test_trSr_add) %>% 
+  select(-c(customDimensions,device,geoNetwork,totals,trafficSource))
+
+# T1_nohits_factors <- T1_nohits_factors[,apply(T1_nohits_factors, 2, function(col) { length(unique(col)) > 1 })] # remove constant variables
+write.csv(Test_nohits_factors, "Data/Test_nohits_factors.csv",row.names=FALSE)
+```
+
+III. recoded data
+```{r}
+T_nohits_factors <- fread("T_nohits_factors.csv")
+browser_n <- dplyr::recode(T_nohits_factors$browser,Chrome="Chrome",Firefox="Firefox", "Internet Explorer"="IE_Safari_Edge", Safari="IE_Safari_Edge", Edge="IE_Safari_Edge", Opera="Opera_Safari(app)_Amazon_Sam_Ya", "Safari (in-app)"="Opera_Safari(app)_Amazon_Sam_Ya", "Amazon Silk"="Opera_Safari(app)_Amazon_Sam_Ya", "Samsung Internet"="Opera_Safari(app)_Amazon_Sam_Ya", YaBrowser="Opera_Safari(app)_Amazon_Sam_Ya", .default="Other")
+operatingSystem_n <- dplyr::recode(T_nohits_factors$operatingSystem, "Chrome OS"="Chrome OS", Macintosh="Mac_Linux", Linux="Mac_Linux", Windows="Win_iOS_Android_WinPhone", iOS="Win_iOS_Android_WinPhone", Android="Win_iOS_Android_WinPhone", "Windows Phone"="Win_iOS_Android_WinPhone", .default="Other")
+continent_n <- dplyr::recode(T_nohits_factors$continent, Americas="America", .default="outside America")
+T_nohits_factors_n=cbind(test,browser_n,operatingSystem_n,continent_n)
+write.csv(T_nohits_factors_n,"Data/T_predictors_EDA_n.csv",row.names=FALSE)
+```
+
+
+

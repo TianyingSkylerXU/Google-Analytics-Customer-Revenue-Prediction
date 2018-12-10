@@ -1,0 +1,879 @@
+---
+title: "EDA"
+author: "Tianying Xu"
+date: "2018年12月9日"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+I. Data
+```{r}
+T_predictors_EDA_n <- read.csv("T_predictors_EDA_n.csv",header=T)
+T_predictors_EDA_n$fullVisitorId=as.character(T_predictors_EDA_n$fullVisitorId)
+T_predictors_EDA_n[is.na(T_predictors_EDA_n)] <- 0 
+```
+
+II. Exploratory Data Analysis
+A. For Linear Mixed Model grouped by users
+1. target distribution
+```{r}
+# raw y
+# table
+# percent
+T_predictors_EDA=T_predictors_EDA_n
+y_table=T_predictors_EDA %>% 
+  mutate(Revenue=ifelse(transactionRevenue>0,1,0)) %>% 
+  group_by(Revenue) %>% 
+  summarise(n=n()) %>% 
+  mutate(percentage=paste0(round(n/nrow(T_predictors_EDA),4)*100,"%"))
+y_table
+
+#distributipon
+# all target
+T_predictors_EDA_user <- T_predictors_EDA %>% 
+  group_by(fullVisitorId) %>% 
+  summarise(target_final=log(sum(transactionRevenue)+1))
+ggplot(T_predictors_EDA_user)+
+  geom_histogram(mapping=aes(x=target_final),fill="skyblue")+
+  ggtitle("Target Histgram")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+# nonzero target
+Target_yes <- T_predictors_EDA_user %>% filter(target_final!=0)
+ggplot(Target_yes)+
+  geom_histogram(mapping=aes(x=target_final),fill="skyblue")+
+  ggtitle("Nonzero Target Histgram")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+# normal distribution
+qqnorm(Target_yes$target_final)
+```
+From the tables, we can see that only 1.08% of outcome is not zero. Also the range of outcome is pretty huge, thus the target in the competition use log transformation.
+
+From the plots, we can see that even target, which is transformed transaction revenue, is severely right skewed, which suggests that there may be random intercept by user, which means adding (1|fullVisitorId) in the linear mixed model. 
+
+For nonzero targets, they seems follow normal distribution. Thus I created qqplot, and it indicates that the nonzero target approximately follows normal distribution.
+
+
+2. predictors and target
+2.0 check correlation
+```{r}
+cors <- cor(T_predictors_EDA_n[,c(8,20:24)])
+symnum(cors)
+```
+From the table we can see that “hits” and “page views” has correlation of 1, thus I select “page views” instead of hits, also correlation between “time on site” and “page views” is more than 0.8. Thus, there may be collinearity. Since the correlation is large as more than 0.8, I choose “page views” instead of “time on site”.
+
+
+2.1 visits, pageviews, bounces, newVisits & visitNumber
+```{r}
+#visits are all 1
+vs <- unique(T_predictors_EDA$visits)
+
+#pageviews
+ggplot(T_user, aes(x=pageviews, y=log(transactionRevenue+1),group=fullVisitorId, color=fullVisitorId))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. pageviews per user (top 300)")+
+  guides(color=FALSE)+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+#bounces
+T_user1 <- T_predictors_EDA %>% 
+  filter(fullVisitorId %in% T_user_visitcount$fullVisitorId[1:1000])
+ggplot(T_user1, aes(x=bounces, y=log(transactionRevenue+1),group=fullVisitorId, color=fullVisitorId))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. bounces per user (top 1000)")+
+  guides(color=FALSE)+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+# newVisits
+T_nVisits <- T_predictors_EDA %>% 
+  select(newVisits,transactionRevenue) %>% 
+  group_by(newVisits) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue))
+ggplot(T_nVisits,mapping = aes(x=reorder(newVisits,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("new visits")+
+  theme(axis.text.x = element_text(angle=45))+
+  ggtitle("mean revenue v.s. new visits")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+# visitNumber
+ggplot(T_visitnum,mapping = aes(x=visitNumber, y=mean_revenue))+
+  geom_point()+geom_jitter()+
+  theme(axis.text.x = element_text(angle=45))+
+  ggtitle("mean revenue v.s. visitNumber")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+```
+
+Due to the large amount of users, I choose top 300 users with most visits to create plots. Also, revenue value is after log transformation.
+
+From the plots of Revenue v.s. pageviews, we can see that the slope of pageviews will change a lot between different users, however there are no correlation between intercept and slope. This may indicate adding (0+pageviews|fullVisitorId) in the linear mixed models.
+
+From the plots of Revenue v.s. bounces, however, we can see that both slope and intercept don't change a lot between different users. This may indicate no mixed effect for bounces in the linear mixed models. But it can be caused by small sample size, thus this plot is created on 1000 users. As showed in the plot, it still doesn't change a lot, thus I will not include mixed effect of bounces in the model. Then I check the whole effect of bounces to revenue and it is evident. Thus "bounces" can be fixed effect but not mixed effect.
+
+newVisut has great impact.
+
+From the plots of Revenue v.s. timeOnSite, we can see that the slope of timeOnSite will change a lot between different users, however there are no correlation between intercept and slope. This may indicate adding (0+timeOnSite|fullVisitorId) in the linear mixed models.
+
+It is evident that “visit number” has great impact on revenue.
+
+2.2 browser, operating system & is mobile
+```{r}
+# browser
+
+# T_browser <- T_predictors_EDA %>% 
+#   select(browser,transactionRevenue) %>% 
+#   group_by(browser) %>% 
+#   summarise(n=n(),mean_revenue=mean(log(transactionRevenue+1))) %>% 
+#   arrange(desc(mean_revenue)) %>% 
+#   filter(mean_revenue!=0)
+# 
+# ggplot(T_browser,mapping = aes(x=reorder(browser,desc(mean_revenue)), y=mean_revenue))+
+#   geom_bar(fill="skyblue",stat="identity")+
+#   geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+#   xlab("browser with nonzero target value")+
+#   theme(axis.text.x = element_text(angle=45))
+
+
+## recode browser by revenue
+# browser_n <- dplyr::recode(T_predictors_EDA$browser,Chrome="Chrome",Firefox="Firefox", "Internet Explorer"="IE_Safari_Edge", Safari="IE_Safari_Edge", Edge="IE_Safari_Edge", Opera="Opera_Safari(app)_Amazon_Sam_Ya", "Safari (in-app)"="Opera_Safari(app)_Amazon_Sam_Ya", "Amazon Silk"="Opera_Safari(app)_Amazon_Sam_Ya", "Samsung Internet"="Opera_Safari(app)_Amazon_Sam_Ya", YaBrowser="Opera_Safari(app)_Amazon_Sam_Ya", .default="Other")
+
+# T_predictors_EDA_n=cbind(T_predictors_EDA,browser_n)
+T_browser1 <- T_predictors_EDA_n %>% 
+  select(browser_n,transactionRevenue) %>% 
+  group_by(browser_n) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue))
+ggplot(T_browser1,mapping = aes(x=reorder(browser_n,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("recoded browser")+
+  theme(axis.text.x = element_text(angle=45))+
+  ggtitle("mean revenue v.s. recoded browser")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+# operating System
+T_opsys <- T_predictors_EDA %>% 
+  select(operatingSystem,transactionRevenue) %>% 
+  group_by(operatingSystem) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue)) 
+
+ggplot(T_opsys,mapping = aes(x=reorder(operatingSystem,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("operating system")+
+  theme(axis.text.x = element_text(angle=45))
+
+## recode operating system by revenue
+# operatingSystem_n <- dplyr::recode(T_predictors_EDA$operatingSystem, "Chrome OS"="Chrome OS", Macintosh="Mac_Linux", Linux="Mac_Linux", Windows="Win_iOS_Android_WinPhone", iOS="Win_iOS_Android_WinPhone", Android="Win_iOS_Android_WinPhone", "Windows Phone"="Win_iOS_Android_WinPhone", .default="Other")
+
+# T_predictors_EDA_n=cbind(T_predictors_EDA_n,operatingSystem_n)
+T_opsys1 <- T_predictors_EDA_n %>% 
+  select(operatingSystem_n,transactionRevenue) %>% 
+  group_by(operatingSystem_n) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue))
+ggplot(T_opsys1,mapping = aes(x=reorder(operatingSystem_n,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("recoded operating system")+
+  theme(axis.text.x = element_text(angle=45))+
+  ggtitle("mean revenue v.s. recoded operating system")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+
+# isMobile
+T_ismobile <- T_predictors_EDA %>% 
+  select(isMobile,transactionRevenue) %>% 
+  group_by(isMobile) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue))
+
+ggplot(T_ismobile,mapping = aes(x=reorder(isMobile,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("mobile or not")+
+  theme(axis.text.x = element_text(angle=45))+
+  ggtitle("mean revenue v.s. isMobile")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+#Appendix
+# deiceCategory
+# mean target
+# T_deviceCategory <- T_predictors_EDA %>% 
+#   select(deviceCategory,target1) %>% 
+#   group_by(deviceCategory) %>% 
+#   summarise(mean_target=mean(target1)) %>% 
+#   arrange(desc(mean_target))
+# 
+# ggplot(T_deviceCategory,mapping = aes(x=reorder(deviceCategory,desc(mean_target)), y=mean_target))+
+#   geom_bar(fill="skyblue",stat="identity")+
+#   geom_text(aes(label=round(mean_target,2)), vjust=0)+
+#   theme(axis.text.x = element_text(angle=45))
+
+```
+
+For browser and operating system predictors, I found that there are too many levels in them, which will not be good to modeling. Thus, I recode them according to the mean revenue. Plots are created after recoding.
+
+From all "browser", "operating system" and "is mobile" plot, we can see that all recoded browser, recoded operating system and mobile or not have huge impact on revenue, thus I should put those variables in models.
+
+
+2.3 geography
+```{r}
+T_continent <- T_predictors_EDA %>% 
+  select(continent,transactionRevenue) %>% 
+  group_by(continent) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue))
+
+ggplot(T_continent,mapping = aes(x=reorder(continent,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("channel grouping")+
+  theme(axis.text.x = element_text(angle=45))+
+  ggtitle("mean revenue v.s. continent")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+## recode continent by revenue
+continent_n <- dplyr::recode(T_predictors_EDA$continent, Americas="America", .default="outside America")
+
+T_predictors_EDA_n=cbind(T_predictors_EDA_n,continent_n)
+T_continent1 <- T_predictors_EDA_n %>% 
+  select(continent_n,transactionRevenue) %>% 
+  group_by(continent_n) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue))
+ggplot(T_continent1,mapping = aes(x=reorder(continent_n,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("recoded continent")+
+  theme(axis.text.x = element_text(angle=45))+
+  ggtitle("mean revenue v.s. recoded continent")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+```
+
+Obviously, continent has great impact on revenue.
+
+2.4 channel grouping, medium and is true direct
+```{r}
+# table
+channel <- T_predictors_EDA %>% select(channelGrouping, medium, isTrueDirect)
+head(channel)
+
+# is true direct
+T_isTrueDirect <- T_predictors_EDA %>%
+  select(isTrueDirect,transactionRevenue) %>%
+  group_by(isTrueDirect) %>%
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>%
+  arrange(desc(mean_revenue))
+
+ggplot(T_isTrueDirect,mapping = aes(x=reorder(isTrueDirect,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  theme(axis.text.x = element_text(angle=45))+
+  xlab("is trur direct")+
+  ggtitle("mean revenue v.s. isTrueDirect")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+
+# source
+# mean target
+# T_source <- T_predictors_EDA %>% 
+#   select(source,transactionRevenue) %>% 
+#   group_by(source) %>% 
+#   summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+#   arrange(desc(mean_revenue)) %>% 
+#   filter(round(mean_revenue,2)!=0)
+# 
+# ggplot(T_source,mapping = aes(x=reorder(source,desc(mean_revenue)), y=mean_revenue))+
+#   geom_bar(fill="skyblue",stat="identity")+
+#   geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+#   xlab("source with nonzero target value")+
+#   theme(axis.text.x = element_text(angle=45))
+
+# Appendix
+# channel grouping
+# mean target
+# ggplot(T_predictors_EDA,mapping = aes(x=channelGrouping, y=log(transactionRevenue+1),group=channelGrouping))+geom_jitter()  #channel grouping don't have a huge impact
+
+T_channel <- T_predictors_EDA %>%
+  select(channelGrouping, transactionRevenue) %>%
+  group_by(channelGrouping) %>%
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>%
+  arrange(desc(mean_revenue))
+
+ggplot(T_channel,mapping = aes(x=reorder(channelGrouping,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("channel grouping")+
+  theme(axis.text.x = element_text(angle=45))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+
+# medium
+# ggplot(T_predictors_EDA,mapping = aes(x=medium, y=log(transactionRevenue+1),group=medium))+geom_jitter()
+
+T_medium <- T_predictors_EDA %>%
+  select(medium,transactionRevenue) %>%
+  group_by(medium) %>%
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>%
+  arrange(desc(mean_revenue))
+
+ggplot(T_medium,mapping = aes(x=reorder(medium,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  theme(axis.text.x = element_text(angle=45))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+```
+
+From the table, it is clear that the "channelGrouping" variable contain similar information with "medium" and "is TrueDirect", compared the plots, I choose "isTrueDirect". From the plot, we can see that direct or not affect revenue significantly. Thus, "isTrueDirect" should be put in the models.
+
+3.3.5 date
+```{r}
+#weekday
+T_predictors_EDA1 <- T_predictors_EDA %>% 
+  select(date,transactionRevenue) %>% 
+  mutate(wkday=as.character(wday(ymd(date)-1)))
+
+T_wkday <- T_predictors_EDA1 %>% 
+  group_by(wkday) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>%
+  arrange(desc(mean_revenue))
+
+ggplot(T_wkday,mapping = aes(x=wkday, y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  theme(axis.text.x = element_text(angle=45))+
+  ggtitle("mean revenue v.s. weekday")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+## recode by mean revenue
+wkday_n <- dplyr::recode(T_predictors_EDA1$wkday, "6"="weekend", "7"="weekend", .default="weekday")
+T_predictors_EDA_n=cbind(T_predictors_EDA_n,wkday_n)
+
+
+# # month
+# T_predictors_EDA2 <- T_predictors_EDA %>% 
+#   select(date,transactionRevenue) %>% 
+#   mutate(mnth=substr(as.character(date),start = 5,stop = 6))
+# 
+# T_mnth <- T_predictors_EDA2 %>% 
+#   group_by(mnth) %>% 
+#   summarise(mean_revenue=mean(log(transactionRevenue+1))) %>%
+#   arrange(desc(mean_revenue))
+# 
+# ggplot(T_mnth,mapping = aes(x=mnth, y=mean_revenue))+
+#   geom_bar(fill="skyblue",stat="identity")+
+#   geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+#   theme(axis.text.x = element_text(angle=45))
+
+write.csv(T_predictors_EDA_n[,c(3:31)],"T_predictors_EDA_n1.csv",row.names = FALSE)
+```
+
+From the weekday plot, it is clear that the mean revenue between weekday and weekend is totally different, thus I will add this predictor in the model.
+
+
+3 between predictors
+3.1 pageviews
+```{r}
+# T_page <- T_predictors_EDA_n %>%
+#   select(pageviews,transactionRevenue) %>%
+#   group_by(pageviews) %>%
+#   summarise(mean_revenue=mean(log(transactionRevenue+1))) %>%
+#   arrange(desc(mean_revenue))
+# 
+# ggplot(T_page,mapping = aes(x=reorder(pageviews,desc(mean_revenue)), y=mean_revenue))+
+#   geom_bar(fill="skyblue",stat="identity")+
+#   geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+#   theme(axis.text.x = element_text(angle=45))+
+#   xlab("is trur direct")+
+#   ggtitle("mean revenue v.s. isTrueDirect")+
+#   theme(plot.title = element_text(hjust = 0.5))
+```
+
+B. Linear Mixed Model grouped by geopraphy
+1. grouped by continents
+```{r}
+ggplot(T_predictors_EDA_n, aes(x=pageviews, y=log(transactionRevenue+1),group=continent, color=continent))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. pageviews --continent")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+ggplot(T_predictors_EDA_n, aes(x=visitNumber, y=log(transactionRevenue+1),group=continent, color=continent))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. visitNumber --continent")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+```
+(0+pageviews|continent),(1+visitNumber|continent)
+
+2. grouped by subcontinents
+```{r}
+ggplot(T_predictors_EDA_n, aes(x=pageviews, y=log(transactionRevenue+1),group=subContinent, color=subContinent))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. pageviews --subContinent")+
+  theme(plot.title = element_text(hjust = 0.5))
+ggplot(T_predictors_EDA_n, aes(x=bounces, y=log(transactionRevenue+1),group=subContinent, color=subContinent))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. bounces --subContinent")+
+  theme(plot.title = element_text(hjust = 0.5))
+ggplot(T_predictors_EDA_n, aes(x=visitNumber, y=log(transactionRevenue+1),group=subContinent, color=subContinent))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. visitNumber --subContinent")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+(1+bounces|continent), (1+visitNumber|continent)
+
+C. EDA for Logistics Model
+1.1 pageviews, bounces, newVisits, timeOnSite
+```{r}
+T_pg <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(pageviews) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>% 
+  arrange(desc(ifs_pre))
+ggplot(T_pg)+
+  geom_bar(mapping=aes(x=reorder(pageviews,ifs_pre),y=ifs_pre),stat="identity")
+
+T_bns <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(bounces) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>% 
+  arrange(desc(ifs_pre))
+ggplot(T_bns)+
+  geom_bar(mapping=aes(x=reorder(bounces,ifs_pre),y=ifs_pre),stat="identity")
+
+T_nv <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(newVisits) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>% 
+  arrange(desc(ifs_pre))
+ggplot(T_nv)+
+  geom_bar(mapping=aes(x=reorder(newVisits,ifs_pre),y=ifs_pre),stat="identity")
+
+T_time <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(timeOnSite) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>% 
+  arrange(desc(ifs_pre))
+ggplot(T_time)+
+  geom_bar(mapping=aes(x=reorder(timeOnSite,ifs_pre),y=ifs_pre),stat="identity")
+
+```
+pageviews+bounces+newVisits+timeOnSite
+
+1.2 browser, operating system & is mobile
+```{r}
+T_bw <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(browser_n) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>% 
+  arrange(desc(ifs_pre))
+ggplot(T_bw)+
+  geom_bar(mapping=aes(x=reorder(browser_n,ifs_pre),y=ifs_pre),stat="identity")
+
+T_lg_ops <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(operatingSystem_n) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>% 
+  arrange(desc(ifs_pre))
+ggplot(T_lg_ops)+
+  geom_bar(mapping=aes(x=reorder(operatingSystem_n,ifs_pre),y=ifs_pre),stat="identity")
+
+T_lg_ism <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(isMobile) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>% 
+  arrange(desc(ifs_pre))
+ggplot(T_lg_ism)+
+  geom_bar(mapping=aes(x=isMobile,y=ifs_pre),stat="identity")
+```
+
+browser_n+operatingSystem_n+isMobile
+
+1.3 geo
+```{r}
+T_lg_geo <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(continent) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>% 
+  arrange(desc(ifs_pre))
+ggplot(T_lg_geo)+
+  geom_bar(mapping=aes(x=reorder(continent,ifs_pre),y=ifs_pre),stat="identity")
+```
+continent_n
+
+1.4 date
+```{r}
+#weekday
+T_lg_wkday <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(wkday_n) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>%
+  arrange(desc(ifs_pre))
+
+ggplot(T_lg_wkday)+
+  geom_bar(mapping=aes(x=reorder(wkday_n,ifs_pre),y=ifs_pre),stat="identity")
+```
+(wkday_n)
+
+1.5 isTrueDirect, visitNumber
+```{r}
+T_ist <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(isTrueDirect) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>%
+  arrange(desc(ifs_pre))
+ggplot(T_ist)+
+  geom_bar(mapping=aes(x=reorder(isTrueDirect,ifs_pre),y=ifs_pre),stat="identity")
+
+
+T_vstnum <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  group_by(visitNumber) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n()) %>%
+  arrange(desc(ifs_pre))
+ggplot(T_vstnum,mapping=aes(x=visitNumber,y=ifs_pre))+
+  geom_point()+geom_smooth(method="lm")
+```
+(isTrueDirect)+(visitNumber)
+
+
+1.6 interaction
+```{r}
+# bounces & newVisits
+T_bns_nv <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(bounces, newVisits, iftransaction) %>% 
+  group_by(bounces,newVisits) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_bns_nv,mapping=aes(x=bounces,y=ifs_pre,group=newVisits,color=newVisits))+
+  geom_smooth(method="lm")
+
+#bounces & browser_n
+T_bns_bw <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(bounces, browser_n, iftransaction) %>% 
+  group_by(bounces,browser_n) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_bns_bw,mapping=aes(x=bounces,y=ifs_pre,group=browser_n,color=browser_n))+
+  geom_smooth(method="lm")
+
+#bounces & operatingSystem_n
+#bounces & isMobile
+#bounces & isTrueDirect
+
+#pageviews &newVisits
+T_bg_nv <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(pageviews, newVisits, iftransaction) %>% 
+  group_by(pageviews,newVisits) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_bg_nv,mapping=aes(x=pageviews,y=ifs_pre,group=newVisits,color=newVisits))+
+  geom_smooth(method="lm")
+#pageviews &browser_n
+T_bg_bw <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(pageviews, browser_n, iftransaction) %>% 
+  group_by(pageviews,browser_n) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_bg_bw,mapping=aes(x=pageviews,y=ifs_pre,group=browser_n,color=browser_n))+
+  geom_smooth(method="lm")
+#pageviews &operatingSystem_n
+T_bg_op <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(pageviews, operatingSystem_n, iftransaction) %>% 
+  group_by(pageviews,operatingSystem_n) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_bg_op,mapping=aes(x=pageviews,y=ifs_pre,group=operatingSystem_n,color=operatingSystem_n))+
+  geom_smooth(method="lm")
+#pageviews &isMobile
+T_bg_ism <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(pageviews, isMobile, iftransaction) %>% 
+  group_by(pageviews,isMobile) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_bg_ism,mapping=aes(x=pageviews,y=ifs_pre,group=isMobile,color=isMobile))+
+  geom_smooth(method="lm")
+#pageviews &isTrueDirect
+T_bg_ist <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(pageviews, isTrueDirect, iftransaction) %>% 
+  group_by(pageviews,isTrueDirect) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_bg_ist,mapping=aes(x=pageviews,y=ifs_pre,group=isTrueDirect,color=isTrueDirect))+
+  geom_smooth(method="lm")
+
+#timeOnSite & newVisit
+T_tm_nv <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(timeOnSite, newVisits, iftransaction) %>% 
+  group_by(timeOnSite,newVisits) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_tm_nv,mapping=aes(x=timeOnSite,y=ifs_pre,group=newVisits,color=newVisits))+
+  geom_smooth(method="lm")
+#timeOnSite & browser_n
+T_tm_bw <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(timeOnSite, browser_n, iftransaction) %>% 
+  group_by(timeOnSite,browser_n) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_tm_bw,mapping=aes(x=timeOnSite,y=ifs_pre,group=browser_n,color=browser_n))+
+  geom_smooth(method="lm")
+#timeOnSite & operatingSystem_n
+T_tm_op <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(timeOnSite, operatingSystem_n, iftransaction) %>% 
+  group_by(timeOnSite,operatingSystem_n) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_tm_op,mapping=aes(x=timeOnSite,y=ifs_pre,group=operatingSystem_n,color=operatingSystem_n))+
+  geom_smooth(method="lm")
+#timeOnSite & isMobile
+T_tm_ism <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(timeOnSite, isMobile, iftransaction) %>% 
+  group_by(timeOnSite,isMobile) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_tm_ism,mapping=aes(x=timeOnSite,y=ifs_pre,group=isMobile,color=isMobile))+
+  geom_smooth(method="lm")
+#timeOnSite & isTrueDirect
+T_tm_ist <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(timeOnSite, isTrueDirect, iftransaction) %>% 
+  group_by(timeOnSite,isTrueDirect) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_tm_ist,mapping=aes(x=timeOnSite,y=ifs_pre,group=isTrueDirect,color=isTrueDirect))+
+  geom_smooth(method="lm")
+
+
+#visitNumber & newVisit cuo
+
+#visitNumber & browser_n
+T_vn_bw <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(visitNumber, browser_n, iftransaction) %>% 
+  group_by(visitNumber,browser_n) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_vn_bw,mapping=aes(x=visitNumber,y=ifs_pre,group=browser_n,color=browser_n))+
+  geom_smooth(method="lm")
+#visitNumber & operatingSystem_n
+T_vn_op <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(visitNumber, operatingSystem_n, iftransaction) %>% 
+  group_by(visitNumber,operatingSystem_n) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_vn_op,mapping=aes(x=visitNumber,y=ifs_pre,group=operatingSystem_n,color=operatingSystem_n))+
+  geom_smooth(method="lm")
+#visitNumber & isMobile
+T_vn_ism <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(visitNumber, isMobile, iftransaction) %>% 
+  group_by(visitNumber,isMobile) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_vn_ism,mapping=aes(x=visitNumber,y=ifs_pre,group=isMobile,color=isMobile))+
+  geom_smooth(method="lm")
+#visitNumber & isTrueDirect
+T_vn_ist <- T_predictors_EDA_n %>% 
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1)) %>% 
+  select(visitNumber, isTrueDirect, iftransaction) %>% 
+  group_by(visitNumber,isTrueDirect) %>% 
+  summarise(ifs_pre=sum(iftransaction)/n())
+ggplot(T_vn_ist,mapping=aes(x=visitNumber,y=ifs_pre,group=isTrueDirect,color=isTrueDirect))+
+  geom_smooth(method="lm")
+
+```
+(bounces*newVisits).
+(bounces*browser_n).
+ 
+(pageviews*newVisits)           (1+pageviews|newVisits)
+pageviews*browser_n  ###        (1+pageviews|browser_n)
+(pageviews*operatingSystem_n)#  (1+pageviews|operatingSystem_n)
+
+(timeOnSite*newVisit)#  (1+timeOnSite|newVisit)
+(timeOnSite & isTrueDirect) #
+
+visitNumber & browser_n ##
+visitNumber & operatingSystem_n ###
+visitNumber & isMobile ###
+visitNumber & isTrueDirect ###
+
+
+D. EDA for Logistics+LMM←
+```{r}
+T_2 <- T_predictors_EDA_n %>% 
+  filter(transactionRevenue!=0)
+T_2 <- T_2[,apply(T_2, 2, function(col) { length(unique(col)) > 1 })]
+```
+
+1. y
+```{r}
+T_2_user <- T_2 %>%
+  group_by(fullVisitorId) %>%
+  summarise(n=n()) %>%
+  arrange(desc(n))
+T_22 <- T_2 %>% filter(fullVisitorId %in% T_2_user$fullVisitorId[1:300])
+
+T_2_y <- T_22 %>% 
+  select(fullVisitorId, transactionRevenue) %>% 
+  group_by(fullVisitorId) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1)))
+ggplot(T_2_y,mapping=aes(x=fullVisitorId,y=mean_revenue,group=fullVisitorId,color=fullVisitorId))+
+  geom_bar(stat="identity")+
+  guides(color=FALSE)
+```
+
+
+2. pageviews, bounces, newVisits, timeOnSite, visitNumber
+```{r}
+#pageviews
+ggplot(T_22, aes(x=pageviews, y=log(transactionRevenue+1),group=fullVisitorId, color=fullVisitorId))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. pageviews per user (top300)")+
+  guides(color=FALSE)+
+  theme(plot.title = element_text(hjust = 0.5))
+# wuguan
+
+# bounces constant
+
+# newVisits
+ggplot(T_22, aes(x=newVisits, y=log(transactionRevenue+1),group=fullVisitorId, color=fullVisitorId))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. newVisits per user(top 300)")+
+  guides(color=FALSE)+
+  theme(plot.title = element_text(hjust = 0.5))
+#wuguan
+
+# timeOnSite
+ggplot(T_22, aes(x=timeOnSite, y=log(transactionRevenue+1),group=fullVisitorId, color=fullVisitorId))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. timeOnSite per user(top 300)")+
+  guides(color=FALSE)+
+  theme(plot.title = element_text(hjust = 0.5))
+
+# visitNumber
+ggplot(T_22, aes(x=visitNumber, y=log(transactionRevenue+1),group=fullVisitorId, color=fullVisitorId))+
+  geom_smooth(method="lm")+
+  ylab("Revenue")+
+  ggtitle("Revenue v.s. visitNumber per user(top 300)")+
+  guides(color=FALSE)+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+(0+pageviews|)
+(1+visitNumber|fullVisitorId)
+(0+timeOnSite|)
+
+3. browser, operating system & is mobile,is true direct
+```{r}
+# browser
+T_bw <- T_2 %>% 
+  group_by(browser_n) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue)) 
+
+ggplot(T_bw,mapping = aes(x=reorder(browser_n,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("recoded browser")+
+  theme(axis.text.x = element_text(angle=45))
+# meiqubie
+
+# operatingSystem_n
+T_op <- T_2 %>% 
+  group_by(operatingSystem) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue)) 
+
+ggplot(T_op,mapping = aes(x=reorder(operatingSystem,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("operatingSystem")+
+  theme(axis.text.x = element_text(angle=45))
+# meiqubie
+
+#isMobile
+T_ism <- T_2 %>% 
+  group_by(isMobile) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue)) 
+
+ggplot(T_ism,mapping = aes(x=reorder(isMobile,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("isMobile")+
+  theme(axis.text.x = element_text(angle=45))
+# xiao
+
+#isTrueDirect
+T_ist <- T_2 %>% 
+  group_by(isTrueDirect) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue)) 
+
+ggplot(T_ist,mapping = aes(x=reorder(isTrueDirect,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("isTrueDirect")+
+  theme(axis.text.x = element_text(angle=45))
+# xiao
+
+```
+browser_n, operatingSystem, isMobile, isTrueDirect
+
+
+4. geo
+```{r}
+T_geo <- T_2 %>% 
+  group_by(continent) %>% 
+  summarise(mean_revenue=mean(log(transactionRevenue+1))) %>% 
+  arrange(desc(mean_revenue)) 
+
+ggplot(T_geo,mapping = aes(x=reorder(continent,desc(mean_revenue)), y=mean_revenue))+
+  geom_bar(fill="skyblue",stat="identity")+
+  geom_text(aes(label=round(mean_revenue,2)), vjust=0)+
+  xlab("continent")+
+  theme(axis.text.x = element_text(angle=45))
+```
+continent
+
+5. date
+```{r}
+#weekday
+T_2_wkday <- T_2 %>% 
+  group_by(wkday_n) %>% 
+  summarise(mean_revenue=mean(transactionRevenue+1)) %>%
+  arrange(desc(mean_revenue))
+
+ggplot(T_2_wkday)+
+  geom_bar(mapping=aes(x=reorder(wkday_n,mean_revenue),y=mean_revenue),stat="identity")
+```
+wkday_n

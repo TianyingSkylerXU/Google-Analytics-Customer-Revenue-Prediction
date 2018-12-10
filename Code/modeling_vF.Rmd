@@ -1,0 +1,231 @@
+---
+title: "modeling_vF"
+author: "Tianying Xu"
+date: "12/07/2018"
+output: html_document
+---
+
+Data
+```{r}
+library(data.table)
+library(lubridate)
+T_predictors <- fread("T_predictors_EDA_n1.csv")
+T_predictors$fullVisitorId=as.character(T_predictors$fullVisitorId)
+T_predictors[is.na(T_predictors)] <- 0  
+
+test <- fread("Test_nohits_factors.csv")
+test$fullVisitorId=as.character(test$fullVisitorId)
+test[is.na(test)] <- 0 
+browser_n <- dplyr::recode(test$browser,Chrome="Chrome",Firefox="Firefox", "Internet Explorer"="IE_Safari_Edge", Safari="IE_Safari_Edge", Edge="IE_Safari_Edge", Opera="Opera_Safari(app)_Amazon_Sam_Ya", "Safari (in-app)"="Opera_Safari(app)_Amazon_Sam_Ya", "Amazon Silk"="Opera_Safari(app)_Amazon_Sam_Ya", "Samsung Internet"="Opera_Safari(app)_Amazon_Sam_Ya", YaBrowser="Opera_Safari(app)_Amazon_Sam_Ya", .default="Other")
+operatingSystem_n <- dplyr::recode(test$operatingSystem, "Chrome OS"="Chrome OS", Macintosh="Mac_Linux", Linux="Mac_Linux", Windows="Win_iOS_Android_WinPhone", iOS="Win_iOS_Android_WinPhone", Android="Win_iOS_Android_WinPhone", "Windows Phone"="Win_iOS_Android_WinPhone", .default="Other")
+continent_n <- dplyr::recode(test$continent, Americas="America", .default="outside America")
+test_n=cbind(test,browser_n,operatingSystem_n,continent_n)
+
+wkday_n <- fread("Data/wkday_n.csv")
+test_n$wkday_n <- wkday_n
+
+
+#data --logis
+library(dplyr)
+T_logis <- T_predictors %>%
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1))
+test_f <- test_n %>%
+  mutate(iftransaction=ifelse(transactionRevenue==0,0,1))
+```
+
+
+I.LMM --by users & II. LMM --by continents
+```{r}
+library(lme4)
+
+# by users
+MD1 <- lmer(log(transactionRevenue+1)~(1|fullVisitorId)+(0+pageviews|fullVisitorId)+scale(pageviews)+scale(bounces)+factor(newVisits)+scale(visitNumber)+factor(browser_n)+factor(operatingSystem_n)+factor(isMobile)+factor(continent_n)+factor(isTrueDirect)+factor(wkday_n), data=T_predictors)
+summary(MD1)
+
+#check
+plot(fitted(MD1),resid(MD1),col="blue")
+qqnorm(resid(MD1))
+
+#prediction
+T_predictors1 <- T_predictors %>%
+  mutate(revenue=log(transactionRevenue+1))
+test_f <- test_n %>%
+  select(transactionRevenue,fullVisitorId,pageviews, bounces, visitNumber,newVisits, isMobile, isTrueDirect, browser_n, operatingSystem_n, wkday_n, continent_n,continent,timeOnSite) %>%
+  mutate(revenue=log(transactionRevenue+1))
+test_f$transactionRevenue <- log(test_f$transactionRevenue+1)
+test_f$pageviews <- scale(test_f$pageviews)
+test_f$bounces <- scale(test_f$bounces)
+test_f$visitNumber <- scale(test_f$visitNumber)
+test_f$isTrueDirect <- as.factor(test_f$isTrueDirect)
+test_f$timeOnSite <- scale(test_f$timeOnSite)
+
+#train
+pre_MD1=predict(MD1)
+rmse_MD1=sqrt(mean((abs(pre_MD1-T_predictors1$transactionRevenue))^2))
+#test
+pre_MD1=predict(MD1,test_f,allow.new.levels=TRUE)
+rmse_MD1=sqrt(mean((abs(pre_MD1-test_f$transactionRevenue))^2))
+#1.97
+
+
+# by continent
+MD2 <- lmer(log(transactionRevenue+1)~(1|continent)+(0+pageviews|continent)+scale(pageviews)+scale(bounces)+scale(visitNumber)+factor(newVisits)+factor(isMobile)+factor(isTrueDirect)+factor(browser_n)+factor(operatingSystem_n)+factor(wkday_n), data=T_predictors)
+summary(MD2)
+
+#check
+plot(fitted(MD2),resid(MD2),col="blue")
+qqnorm(resid(MD2))
+
+#prediction
+#train
+pre_MD2=predict(MD2)
+rmse_MD2=sqrt(mean((abs(pre_MD2-T_predictors1$transactionRevenue))^2))
+#test
+pre_MD2=predict(MD2,test_f,allow.new.levels=TRUE)
+rmse_MD2=sqrt(mean((abs(pre_MD2-test_f$transactionRevenue))^2))
+#1.934
+```
+
+
+III. Logis+LMM
+1.Logis
+```{r}
+## MD4: EDA all+### interaction+##+#interaction
+MD4 <- glm(iftransaction~scale(pageviews)+scale(bounces)+factor(newVisits)+scale(timeOnSite)+factor(browser_n)+factor(operatingSystem_n)+factor(isMobile)+factor(continent_n)+factor(wkday_n)+factor(isTrueDirect)+scale(visitNumber)+pageviews*browser_n+visitNumber*operatingSystem_n+visitNumber*isMobile+visitNumber*isTrueDirect+pageviews*operatingSystem_n+timeOnSite*newVisits+timeOnSite*isTrueDirect+visitNumber*browser_n,family=binomial(link="logit"),data=T_logis)
+summary(MD4)
+### check
+arm::binnedplot(fitted(MD4),resid(MD4,type="response"))
+### predict
+#### train
+pre_logis_MD4_train <- round(predict(MD4,type="response"),0)
+sum(pre_logis_MD4_train==T_logis$iftransaction)/nrow(T_logis)
+#  0.989
+#### test
+pre_logis_MD4_test <- round(predict(MD4,test_f,type="response"),0)
+sum(pre_logis_MD4_test==test_f$iftransaction)/nrow(test_f)
+# 0.988
+sum(pre_logis_MD4_test)
+# 890, 369
+sum(pre_logis_MD4_test==1 & test_f$iftransaction==1)
+```
+
+
+2. LMM
+Data
+```{r}
+T2 <- T_logis %>%
+  filter(transactionRevenue!=0)
+test2 <- test_n %>%
+  mutate(revenue=log(transactionRevenue+1))
+test2 <- test2[pre_logis_MD4_test==1,]
+test2$visitNumber=scale(test2$visitNumber)
+```
+
+```{r}
+MD21 <- lmer(revenue~(0+visitNumber|fullVisitorId)+scale(visitNumber)+browser_n+operatingSystem_n+isMobile+isTrueDirect+continent+wkday_n,data=T2)
+summary(MD21)
+#check
+plot(fitted(MD21),resid(MD21),col="blue")
+#prediction
+#train
+pre_MD21_train=predict(MD21)
+rmse_MD21_train=sqrt((sum((pre_MD21_train-T2$revenue)^2))/length(pre_MD21))
+# 4.757
+#test
+pre_MD21=predict(MD21,tst2,allow.new.levels=TRUE)
+rmse_MD21=sqrt((sum((pre_MD21-tst2$revenue)^2))/length(pre_MD21))
+#13.52
+```
+
+
+IV. Censored Regression with Conditional Heteroscedasticy(CRCH) Model
+```{r}
+T_logis <- T_logis %>%
+  mutate(revenue=log(transactionRevenue+1))
+
+library(crch)
+cc4 <- trch(revenue~scale(pageviews)+scale(bounces)+factor(newVisits)+scale(timeOnSite)+factor(browser_n)+factor(operatingSystem_n)+factor(isMobile)+factor(continent_n)+factor(wkday_n)+factor(isTrueDirect)+scale(visitNumber),link.scale="log",dist="gaussian",left=0,data=T_logis)
+summary(cc4)
+#resid plot
+#prediction
+#train
+pre_cc4_train <- predict(cc4,type="response")
+rmse_cc4_train=sqrt((sum((pre_cc4_train-T_logis$revenue)^2))/length(pre_cc4_train))
+#test
+pre_cc4_test <- predict(cc4,test_f,type="response")
+rmse_cc4=sqrt((sum((pre_cc4_test-test_f$revenue)^2))/length(pre_cc4_test))
+#1.867
+```
+
+
+V. Light GBM
+```{r}
+# data
+library(data.table)
+Train_all <- fread("T_predictors_EDA_n1.csv")
+Train_all$fullVisitorId=as.character(Train_all$fullVisitorId)
+Train_all[is.na(Train_all)] <- 0  
+Train_all$isMobile=as.factor(Train_all$isMobile)
+Train_all$isTrueDirect=as.factor(Train_all$isTrueDirect)
+Train_all$continent=as.factor(Train_all$continent)
+Train_all$subContinent=as.factor(Train_all$subContinent)
+Train_all$browser_n=as.factor(Train_all$browser_n)
+Train_all$operatingSystem=as.factor(Train_all$operatingSystem)
+Train_all$wkday_n=as.factor(Train_all$wkday_n)
+
+Test_all <- test_n
+Test_all$fullVisitorId=as.character(Test_all$fullVisitorId)
+Test_all[is.na(Test_all)] <- 0 
+Test_all$isMobile=as.factor(Test_all$isMobile)
+Test_all$isTrueDirect=as.factor(Test_all$isTrueDirect)
+Test_all$continent=as.factor(Test_all$continent)
+Test_all$subContinent=as.factor(Test_all$subContinent)
+Test_all$browser_n=as.factor(Test_all$browser_n)
+Test_all$operatingSystem=as.factor(Test_all$operatingSystem)
+Test_all$wkday_n=as.factor(Test_all$wkday_n)
+
+T_lgb <- Train_all %>%
+  mutate(revenue=log(transactionRevenue+1)) %>%
+  select(revenue,visitNumber, isMobile, continent,subContinent, hits, pageviews, bounces, newVisits, timeOnSite, isTrueDirect, browser_n, operatingSystem, wkday_n) %>%
+  mutate_if(is.factor,as.integer) %>%
+  glimpse()
+
+Tst_lgb <- Test_all %>%
+  mutate(revenue=log(transactionRevenue+1)) %>%
+  select(revenue,visitNumber, isMobile, continent,subContinent, hits, pageviews, bounces, newVisits, timeOnSite, isTrueDirect, browser_n, operatingSystem, wkday_n)%>%
+  mutate_if(is.factor,as.integer) %>%
+  glimpse()
+
+train_lgb <- T_lgb %>%
+  select(-revenue)
+test_lgb <- Tst_lgb %>%
+  select(-revenue)
+
+trainLabel <- T_lgb$revenue
+testLabel <- Tst_lgb$revenue
+categorical_feature <- c("isMobile", "continent", "subContinent","newVisits", "isTrueDirect", "browser_n", "operatingSystem", "wkday_n")
+
+train <- lgb.Dataset(as.matrix(train_lgb),label=trainLabel,categorical_feature=categorical_feature)
+test <- lgb.Dataset(as.matrix(test_lgb),label=testLabel, categorical_feature=categorical_feature)
+
+params <- list(objective="regression",metric="rmse",learning_rate=0.01)
+
+lgb.model <- lgb.train(params=params,data=train,valids=list(val=test),learning_rate=0.01,nrounds=5000,verbose=1,early_stopping_rounds=50,eval_freq=1000)
+
+lgb.model$best_score
+
+imp <- lgb.importance(lgb.model,percentage=TRUE)
+lgb.plot.importance(imp,top_n=50, measure="Gain")
+
+tree_interpretation <- lgb.interprete(lgb.model, test_lgb, 1:5)
+lgb.plot.interpretation(tree_interpretation[[1]], top_n = 10)
+```
+
+
+
+
+
+
+
+
+
